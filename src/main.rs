@@ -1,36 +1,31 @@
 extern crate iron;
+extern crate router;
 extern crate time;
 
 use iron::prelude::*;
-use iron::{BeforeMiddleware, AfterMiddleware, typemap};
-use time::precise_time_ns;
+use iron::status;
+use router::Router;
+use std::hash::{Hash, SipHasher, Hasher};
 
-struct ResponseTime;
-
-impl typemap::Key for ResponseTime { type Value = u64; }
-
-impl BeforeMiddleware for ResponseTime {
-    fn before(&self, req: &mut Request) -> IronResult<()> {
-        req.extensions.insert::<ResponseTime>(precise_time_ns());
-        Ok(())
-    }
+fn login_handler(req: &mut Request) -> IronResult<Response> {
+    let ref username = req.extensions.get::<Router>().unwrap().find("username").unwrap_or("/");
+    // TODO: use the hash_map::DefaultHasher
+    let mut s = SipHasher::new();
+    username.hash(&mut s);
+    let userhash = s.finish();
+    Ok(Response::with((status::Ok, format!("Login with {}. secret={}", username, userhash))))
 }
 
-impl AfterMiddleware for ResponseTime {
-    fn after(&self, req: &mut Request, res: Response) -> IronResult<Response> {
-        let delta = precise_time_ns() - *req.extensions.get::<ResponseTime>().unwrap();
-        println!("Request took: {} ms", (delta as f64) / 1000000.0);
-        Ok(res)
-    }
-}
-
-fn hello_world(_: &mut Request) -> IronResult<Response> {
-    Ok(Response::with((iron::status::Ok, "Hello World")))
+fn index_handler(req: &mut Request) -> IronResult<Response> {
+    Ok(Response::with((status::Ok, format!("Welcome to Crab bank"))))
 }
 
 fn main() {
-    let mut chain = Chain::new(hello_world);
-    chain.link_before(ResponseTime);
-    chain.link_after(ResponseTime);
-    Iron::new(chain).http("localhost:3000").unwrap();
+    let mut router = Router::new();
+    router.get("/", index_handler, "index");
+    router.get("/login/:username", login_handler, "username");
+    //TODO: handle 404
+
+    Iron::new(router).http("localhost:3000").unwrap();
 }
+
