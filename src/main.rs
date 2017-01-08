@@ -51,15 +51,57 @@ fn init_db() {
     println!("Initialize accounts table.");
 }
 
-fn balance_handler(req : &mut Request) -> IronResult<Response> {
-    let secret = req.extensions.get::<Router>().unwrap().find("secret").unwrap_or("/");
+fn get_balance_by_secret(secret: &str) -> rusqlite::Result<f64> {
     let db = Connection::open(DB_PATH).unwrap();
-    match db.query_row("SELECT balance FROM accounts WHERE secret = ?",
-                       &[&secret], |row| { row.get::<_, f64>(0) }) {
+    db.query_row("SELECT balance FROM accounts WHERE secret = ?", &[&secret],
+                 |row| { row.get::<_, f64>(0) })
+}
+
+fn set_balance_by_secret(secret: &str, balance: f64) {
+    let db = Connection::open(DB_PATH).unwrap();
+    db.execute("UPDATE accounts SET balance = ?1 WHERE secret = ?2",
+               &[&balance, &secret]).unwrap();
+    println!("Update user {}'s balance to {}", secret, balance);
+}
+
+fn get_balance_by_username(username: &str) -> rusqlite::Result<f64> {
+    let db = Connection::open(DB_PATH).unwrap();
+    db.query_row("SELECT balance FROM accounts WHERE username = ?", &[&username],
+                 |row| { row.get::<_, f64>(0) })
+}
+
+fn set_balance_by_username(username: &str, balance: f64) {
+    let db = Connection::open(DB_PATH).unwrap();
+    db.execute("UPDATE accounts SET balance = ?1 WHERE username = ?2",
+               &[&balance, &username]).unwrap();
+    println!("Update user {}'s balance to {}", username, balance);
+}
+
+fn balance_handler(req: &mut Request) -> IronResult<Response> {
+    let secret = req.extensions.get::<Router>().unwrap().find("secret").unwrap_or("/");
+    match get_balance_by_secret(secret) {
         Ok(balance) =>
             Ok(Response::with((status::Ok, format!("Your balance is {}.", balance)))),
         Err(_) =>
             Ok(Response::with((status::Ok, "Invalid secret."))),
+    }
+}
+
+fn transfer_handler(req: &mut Request) -> IronResult<Response> {
+    let router = req.extensions.get::<Router>().unwrap();
+    let secret = router.find("secret").unwrap();
+    let receiver = router.find("receiver").unwrap();
+    let amount: f64 = router.find("amount").unwrap().parse().unwrap();
+    if let Ok(sender_balance) = get_balance_by_secret(secret) {
+        if let Ok(receiver_balance) = get_balance_by_username(receiver) {
+            set_balance_by_secret(secret, sender_balance - amount);
+            set_balance_by_username(receiver, receiver_balance + amount);
+            Ok(Response::with((status::Ok, "Transfer complete.")))
+        } else {
+            Ok(Response::with((status::Ok, "User doesn't exist.")))
+        }
+    } else {
+        Ok(Response::with((status::Ok, "Invalid secret.")))
     }
 }
 
@@ -70,6 +112,10 @@ fn main() {
     router.get("/", index_handler, "index");
     router.get("/login/:username", login_handler, "username");
     router.get("/balance/:secret", balance_handler, "balance");
+
+    // TODO: use post instead of get.
+    router.get("/transfer/:secret/:receiver/:amount", transfer_handler, "transfer");
+
     //TODO: handle 404
 
     Iron::new(router).http("localhost:3000").unwrap();
